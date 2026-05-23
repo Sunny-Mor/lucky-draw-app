@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: participate
+  namespace: sunnymor
+  labels:
+    app: participate
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: participate
+  template:
+    metadata:
+      labels:
+        app: participate
+    spec: 
+      imagePullSecrets:
+        - name: ghcr
+      tolerations:
+        - key: tier
+          operator: Equal
+          value: database
+          effect: NoSchedule # tolerate the taint on the worker node
+        - key: tier
+          operator: Equal
+          value: database
+          effect: NoExecute # tolerate the taint on the worker node
+      containers:
+        - name: participate
+          image: ghcr.io/kul-samples/sunnymor-participate-app:latest
+          ports:
+            - containerPort: 5000
+              name: participate
+          resources:
+            limits:
+              cpu: 100m
+              memory: 100Mi
+          envFrom:
+            - configMapRef:
+                name: redis-config
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: participate
+  namespace: sunnymor
+  labels:
+    app: participate
+spec:
+  type: ClusterIP
+  ports:
+    - name: participate
+      port: 80
+      targetPort: participate
+  selector:
+    app: participate

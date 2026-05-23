@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pick-winner
+  namespace: sunnymor
+  labels:
+    app: pick-winner
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pick-winner
+  template:
+    metadata:
+      labels:
+        app: pick-winner
+    spec: 
+      imagePullSecrets:
+        - name: ghcr
+      tolerations:
+        - key: tier
+          operator: Equal
+          value: database
+          effect: NoSchedule # tolerate the taint on the worker node
+        - key: tier
+          operator: Equal
+          value: database
+          effect: NoExecute # tolerate the taint on the worker node
+      containers:
+        - name: pick-winner
+          image: ghcr.io/kul-samples/sunnymor-pick-winner-app:latest
+          ports:
+            - containerPort: 5000
+              name: pick-winner
+          resources:
+            limits:
+              cpu: 100m
+              memory: 100Mi
+          envFrom:
+            - configMapRef: # Postgres connection details
+                name: postgres-config
+            - configMapRef: # Crdedentials for admin user
+                name: winner-app-config
+            - secretRef: # Postgres password
+                name: postgres-secret
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: pick-winner
+  namespace: sunnymor
+  labels:
+    app: pick-winner
+spec:
+  type: ClusterIP
+  ports:
+    - name: pick-winner
+      port: 80
+      targetPort: pick-winner
+  selector:
+    app: pick-winner
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: winner-app-config
+  namespace: sunnymor
+data:
+  ADMIN_USERNAME: admin
+  ADMIN_PASSWORD: adminpass

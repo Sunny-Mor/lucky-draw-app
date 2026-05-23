@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: submissions
+  namespace: sunnymor
+  labels:
+    app: submissions
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: submissions
+  template:
+    metadata:
+      labels:
+        app: submissions
+    spec: 
+      tolerations:
+        - key: tier
+          operator: Equal
+          value: database
+          effect: NoSchedule # tolerate the taint on the worker node
+        - key: tier
+          operator: Equal
+          value: database
+          effect: NoExecute # tolerate the taint on the worker node
+      containers:
+        - name: submissions
+          image: ghcr.io/kul-samples/sunnymor-submissions-app:latest
+          ports:
+            - containerPort: 5000
+              name: submissions
+          resources:
+            limits:
+              cpu: 100m
+              memory: 100Mi
+          envFrom:
+            - configMapRef:
+                name: postgres-config
+            - secretRef:
+                name: postgres-secret
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: submissions
+  namespace: sunnymor
+  labels:
+    app: submissions
+spec:
+  type: ClusterIP
+  ports:
+    - name: submissions
+      port: 80
+      targetPort: submissions
+  selector:
+    app: submissions

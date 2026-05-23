@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-to-postgres-worker
+  namespace: sunnymor
+  labels:
+    app: redis-to-postgres-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-to-postgres-worker
+  template:
+    metadata:
+      labels:
+        app: redis-to-postgres-worker
+    spec: 
+      tolerations:
+        - key: tier
+          operator: Equal
+          value: database
+          effect: NoSchedule # tolerate the taint on the worker node
+        - key: tier
+          operator: Equal
+          value: database
+          effect: NoExecute # tolerate the taint on the worker node
+      containers:
+        - name: redis-to-postgres-worker
+          image: ghcr.io/kul-samples/sunnymor-sync-worker-app:latest
+          resources:
+            limits:
+              cpu: 100m
+              memory: 100Mi
+          envFrom:
+            - configMapRef: # Postgres connection details
+                name: postgres-config
+            - secretRef: # Postgres password
+                name: postgres-secret
+            - configMapRef:
+                name: redis-config
+          env:
+            - name: REDIS_POLL_INTERVAL
+              value: "5"
+

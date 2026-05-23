@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: sunnymor
+  labels:
+    app: redis
+spec:
+  replicas: 1
+  serviceName: redis
+  selector:
+    matchLabels:
+      app: redis
+  template: # Pod template
+    metadata:
+      labels:
+        app: redis
+    spec: 
+      tolerations:
+        - key: tier
+          operator: Equal
+          value: database
+          effect: NoSchedule # tolerate the taint on the worker node
+        - key: tier
+          operator: Equal
+          value: database
+          effect: NoExecute # tolerate the taint on the worker node
+      volumes:
+        - name: redis-data
+          hostPath:
+            path: /opt/redis-data # path on the host where the data will be stored
+            type: DirectoryOrCreate  # create the directory if it does not exist
+      containers:
+        - name: redis
+          image: redis:6.2
+          ports:
+            - containerPort: 6379
+              name: redis
+          resources:
+            limits:
+              cpu: 150m
+              memory: 150Mi
+          volumeMounts:
+            - mountPath: /data # mount the volume to the container
+              name: redis-data # name of the volume defined above
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: sunnymor
+  labels:
+    app: redis
+spec:
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+  selector:
+    app: redis
+  type: ClusterIP # default type is ClusterIP, but you can change it to NodePort or LoadBalancer if needed
+  sessionAffinity: None # default is None, but you can change it to ClientIP if needed
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  namespace: sunnymor
+data:
+  REDIS_HOST: redis.sunnymor.svc
+  REDIS_PORT: "6379"

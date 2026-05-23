@@ -1,0 +1,36 @@
+#write networking policy for ingress for api gateway
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-gateway
+  namespace: sunnymor
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+spec: 
+  ingressClassName: nginx
+  rules:
+    - host: <replace-with-FQDN>
+      http:
+        paths:
+          - path: /participate
+            pathType: Prefix
+            backend:
+              service:
+                name: participate
+                port: 
+                  number: 80
+          - path: /submissions
+            pathType: Prefix
+            backend:
+              service:
+                name: submissions
+                port: 
+                  number: 80
+          - path: /pick_winner
+            pathType: Prefix
+            backend:
+              service:
+                name: pick-winner
+                port: 
+                  number: 80

@@ -1,0 +1,110 @@
+version: "3.9"
+
+networks:
+  sunnymor:
+    driver: bridge
+
+services:
+  redis:
+    image: redis:6.2
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - sunnymor
+
+  postgres:
+    image: postgres:15.7
+    container_name: postgres
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - sunnymor
+
+  participate-app:
+    build:
+      context: .
+      dockerfile: participate.dockerfile
+    #image: ghcr.io/kul-samples/sunnymor-participate-app:latest
+    container_name: participate-app
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    depends_on:
+      - redis
+    ports:
+      - "8081:5000"
+    networks:
+      - sunnymor
+
+  submissions-app:
+    build:
+      context: .
+      dockerfile: submissions.dockerfile
+    #image: ghcr.io/kul-samples/sunnymor-submissions-app:latest
+    container_name: submissions-app
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    depends_on:
+      - redis
+    ports:
+      - "8082:5000"
+    networks:
+      - sunnymor
+
+  redis-to-postgres-worker:
+    build:
+      context: .
+      dockerfile: sync_postgres.dockerfile
+    #image: sync_postgres:latest        
+    container_name: sync_postgres
+    depends_on:
+      - redis
+      - postgres
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+
+      REDIS_POLL_INTERVAL: 5
+    ports:
+      - "8000:5000"
+    networks:
+      - sunnymor
+
+  pick-winner:
+    build:
+      context: .
+      dockerfile: pick_winner.dockerfile
+    #image: sync_postgres:latest        
+    container_name: pick_winner
+    depends_on:
+      - postgres
+    environment:
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: adminpass
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+
+    ports:
+      - "5000:5000"
+    networks:
+      - sunnymor
+
+volumes:
+  postgres_data:

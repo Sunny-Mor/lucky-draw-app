@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: sunnymor
+  labels:
+    app: postgres
+spec:
+  replicas: 1
+  serviceName: postgres
+  selector:
+    matchLabels:
+      app: postgres
+  template: # Pod template
+    metadata:
+      labels:
+        app: postgres
+    spec: 
+      tolerations:
+        - key: tier
+          operator: Equal
+          value: database
+          effect: NoSchedule # tolerate the taint on the worker node
+        - key: tier
+          operator: Equal
+          value: database
+          effect: NoExecute # tolerate the taint on the worker node
+      volumes:
+        - name: postgres-data
+          hostPath:
+            path: /opt/postgres-data # path on the host where the data will be stored
+            type: DirectoryOrCreate  # create the directory if it does not exist
+      containers:
+        - name: postgres
+          image: postgres:15.7
+          ports:
+            - containerPort: 5432
+              name: postgres
+          resources:
+            limits:
+              cpu: 150m
+              memory: 150Mi
+          volumeMounts:
+            - mountPath: /var/lib/postgres/data # mount the volume to the container
+              name: postgres-data # name of the volume defined above
+          envFrom:
+            - secretRef: # Postgres password
+                name: postgres-secret
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: sunnymor
+  labels:
+    app: postgres
+spec:
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+  selector:
+    app: postgres
+  type: ClusterIP # default type is ClusterIP, but you can change it to NodePort or LoadBalancer if needed
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  namespace: sunnymor
+data:
+  POSTGRES_HOST: postgres.sunnymor.svc
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: postgres
+  POSTGRES_DATABASE: luckydraw
+
+---
+apiVersion: v1
+kind: Secret 
+metadata:
+  name: postgres-secret
+  namespace: sunnymor 
+type: Opaque
+data:
+  POSTGRES_PASSWORD: cG9zdGdyZXNfcGFzc3dvcmQ= # base64 encoded password 'postgres_password'

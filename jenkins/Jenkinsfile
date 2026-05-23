@@ -1,0 +1,133 @@
+pipeline {
+    agent any
+
+    environment {
+        AWS_REGION      = 'us-east-1'
+        CLUSTER_NAME    = 'luckydraw-prod'
+        K8S_NAMESPACE   = 'luckydraw'
+        IMAGE_TAG       = "${env.BUILD_NUMBER}-${env.GIT_COMMIT?.take(7)}"
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Configure AWS') {
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials'
+                ]]) {
+                    sh 'aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION'
+                    sh 'aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $(aws sts get-caller-identity --query Account --output text).dkr.ecr.$AWS_REGION.amazonaws.com'
+                }
+            }
+        }
+
+        stage('Build & Push Images') {
+            parallel {
+                stage('participate') {
+                    steps {
+                        script {
+                            def repo = env.ECR_PARTICIPATE_URL
+                            sh "docker build -f docker/participate/Dockerfile -t ${repo}:${IMAGE_TAG} -t ${repo}:latest ."
+                            sh "docker push ${repo}:${IMAGE_TAG} && docker push ${repo}:latest"
+                        }
+                    }
+                }
+                stage('submissions') {
+                    steps {
+                        script {
+                            def repo = env.ECR_SUBMISSIONS_URL
+                            sh "docker build -f docker/submissions/Dockerfile -t ${repo}:${IMAGE_TAG} -t ${repo}:latest ."
+                            sh "docker push ${repo}:${IMAGE_TAG} && docker push ${repo}:latest"
+                        }
+                    }
+                }
+                stage('pick-winner') {
+                    steps {
+                        script {
+                            def repo = env.ECR_PICK_WINNER_URL
+                            sh "docker build -f docker/pick-winner/Dockerfile -t ${repo}:${IMAGE_TAG} -t ${repo}:latest ."
+                            sh "docker push ${repo}:${IMAGE_TAG} && docker push ${repo}:latest"
+                        }
+                    }
+                }
+                stage('sync-worker') {
+                    steps {
+                        script {
+                            def repo = env.ECR_SYNC_WORKER_URL
+                            sh "docker build -f docker/sync-worker/Dockerfile -t ${repo}:${IMAGE_TAG} -t ${repo}:latest ."
+                            sh "docker push ${repo}:${IMAGE_TAG} && docker push ${repo}:latest"
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Update Secrets') {
+            steps {
+                withCredentials([
+                    string(credentialsId: 'postgres-password',  variable: 'POSTGRES_PASSWORD'),
+                    string(credentialsId: 'admin-username',     variable: 'ADMIN_USERNAME'),
+                    string(credentialsId: 'admin-password',     variable: 'ADMIN_PASSWORD'),
+                    string(credentialsId: 'app-secret-key',     variable: 'APP_SECRET_KEY')
+                ]) {
+                    sh '''
+                        kubectl create secret generic postgres-secret \
+                          --from-literal=POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
+                          --namespace=$K8S_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+
+                        kubectl create secret generic app-secret \
+                          --from-literal=ADMIN_USERNAME=$ADMIN_USERNAME \
+                          --from-literal=ADMIN_PASSWORD=$ADMIN_PASSWORD \
+                          --from-literal=SECRET_KEY=$APP_SECRET_KEY \
+                          --namespace=$K8S_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+                    '''
+                }
+            }
+        }
+
+        stage('Deploy to EKS') {
+            steps {
+                sh '''
+                    sed -i "s|PARTICIPATE_IMAGE|${ECR_PARTICIPATE_URL}:${IMAGE_TAG}|g" k8s/base/participate/participate.yaml
+                    sed -i "s|SUBMISSIONS_IMAGE|${ECR_SUBMISSIONS_URL}:${IMAGE_TAG}|g" k8s/base/submissions/submissions.yaml
+                    sed -i "s|PICK_WINNER_IMAGE|${ECR_PICK_WINNER_URL}:${IMAGE_TAG}|g" k8s/base/pick-winner/pick-winner.yaml
+                    sed -i "s|SYNC_WORKER_IMAGE|${ECR_SYNC_WORKER_URL}:${IMAGE_TAG}|g" k8s/base/sync-worker/sync-worker.yaml
+
+                    kubectl apply -k k8s/
+
+                    kubectl rollout status deployment/participate -n $K8S_NAMESPACE --timeout=180s
+                    kubectl rollout status deployment/submissions -n $K8S_NAMESPACE --timeout=180s
+                    kubectl rollout status deployment/pick-winner -n $K8S_NAMESPACE --timeout=180s
+                    kubectl rollout status deployment/sync-worker -n $K8S_NAMESPACE --timeout=180s
+                '''
+            }
+        }
+
+        stage('Verify') {
+            steps {
+                sh '''
+                    echo "==> Pods:"
+                    kubectl get pods -n $K8S_NAMESPACE
+                    echo "==> ALB address:"
+                    kubectl get ingress luckydraw-ingress -n $K8S_NAMESPACE \
+                      -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+                '''
+            }
+        }
+    }
+
+    post {
+        failure {
+            echo "Pipeline failed. Check logs above."
+        }
+        success {
+            echo "Deployment successful. Image tag: ${IMAGE_TAG}"
+        }
+    }
+}
