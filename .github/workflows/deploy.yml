@@ -1,0 +1,134 @@
+name: Application Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "*.py"
+      - "docker/**"
+      - "k8s/**"
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  CLUSTER_NAME: luckydraw-prod
+  K8S_NAMESPACE: luckydraw
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  # -------------------------------------------------------
+  # Build & push all 4 images in parallel
+  # -------------------------------------------------------
+  build:
+    name: Build ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - service: participate
+            dockerfile: docker/participate/Dockerfile
+            ecr_secret: ECR_PARTICIPATE_URL
+          - service: submissions
+            dockerfile: docker/submissions/Dockerfile
+            ecr_secret: ECR_SUBMISSIONS_URL
+          - service: pick-winner
+            dockerfile: docker/pick-winner/Dockerfile
+            ecr_secret: ECR_PICK_WINNER_URL
+          - service: sync-worker
+            dockerfile: docker/sync-worker/Dockerfile
+            ecr_secret: ECR_SYNC_WORKER_URL
+
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image tag
+        id: meta
+        run: echo "tag=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ${{ secrets[matrix.ecr_secret] }}:${{ github.sha }}
+            ${{ secrets[matrix.ecr_secret] }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # -------------------------------------------------------
+  # Deploy to EKS after all images are built
+  # -------------------------------------------------------
+  deploy:
+    name: Deploy to EKS
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+
+      - name: Create/update Secrets
+        run: |
+          kubectl create secret generic postgres-secret \
+            --from-literal=POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }} \
+            --namespace=${{ env.K8S_NAMESPACE }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl create secret generic app-secret \
+            --from-literal=ADMIN_USERNAME=${{ secrets.ADMIN_USERNAME }} \
+            --from-literal=ADMIN_PASSWORD=${{ secrets.ADMIN_PASSWORD }} \
+            --from-literal=SECRET_KEY=${{ secrets.APP_SECRET_KEY }} \
+            --namespace=${{ env.K8S_NAMESPACE }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Set image tags in manifests
+        run: |
+          IMAGE_TAG=${{ github.sha }}
+          sed -i "s|PARTICIPATE_IMAGE|${{ secrets.ECR_PARTICIPATE_URL }}:${IMAGE_TAG}|g" k8s/base/participate/participate.yaml
+          sed -i "s|SUBMISSIONS_IMAGE|${{ secrets.ECR_SUBMISSIONS_URL }}:${IMAGE_TAG}|g" k8s/base/submissions/submissions.yaml
+          sed -i "s|PICK_WINNER_IMAGE|${{ secrets.ECR_PICK_WINNER_URL }}:${IMAGE_TAG}|g" k8s/base/pick-winner/pick-winner.yaml
+          sed -i "s|SYNC_WORKER_IMAGE|${{ secrets.ECR_SYNC_WORKER_URL }}:${IMAGE_TAG}|g" k8s/base/sync-worker/sync-worker.yaml
+
+      - name: Deploy with Kustomize
+        run: kubectl apply -k k8s/
+
+      - name: Wait for rollouts
+        run: |
+          kubectl rollout status deployment/participate  -n ${{ env.K8S_NAMESPACE }} --timeout=180s
+          kubectl rollout status deployment/submissions  -n ${{ env.K8S_NAMESPACE }} --timeout=180s
+          kubectl rollout status deployment/pick-winner  -n ${{ env.K8S_NAMESPACE }} --timeout=180s
+          kubectl rollout status deployment/sync-worker  -n ${{ env.K8S_NAMESPACE }} --timeout=180s
+
+      - name: Print ALB address
+        run: |
+          echo "==> ALB Ingress address:"
+          kubectl get ingress luckydraw-ingress -n ${{ env.K8S_NAMESPACE }} \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
