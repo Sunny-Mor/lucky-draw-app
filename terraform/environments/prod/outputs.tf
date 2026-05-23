@@ -19,11 +19,11 @@ output "vpc_id" {
 }
 
 output "private_subnet_ids" {
-  value = module.vpc.private_subnet_ids
+  value = module.vpc.private_subnets
 }
 
 output "public_subnet_ids" {
-  value = module.vpc.public_subnet_ids
+  value = module.vpc.public_subnets
 }
 
 output "ecr_participate_url" {
