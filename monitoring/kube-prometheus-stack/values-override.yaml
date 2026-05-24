@@ -1,0 +1,64 @@
+# Override values for kube-prometheus-stack v58.0.0
+# Applied with: helm upgrade --install ... -f values-override.yaml
+#
+# Grafana admin password is injected at deploy time:
+#   helm upgrade ... --set kube-prometheus-stack.grafana.adminPassword=$GRAFANA_PASSWORD
+# The password is stored in AWS Secrets Manager under luckydraw-prod/app-secrets.
+
+kube-prometheus-stack:
+
+  grafana:
+    enabled: true
+
+    persistence:
+      enabled: true
+      storageClassName: gp3
+      size: 5Gi
+
+    service:
+      type: ClusterIP   # access via port-forward; ALB exposure in a later phase
+
+    defaultDashboardsEnabled: true
+    defaultDashboardsTimezone: UTC
+
+    # Pre-load useful dashboards
+    additionalDataSources: []
+
+  prometheus:
+    prometheusSpec:
+      retention: 15d
+
+      storageSpec:
+        volumeClaimTemplate:
+          spec:
+            storageClassName: gp3
+            accessModes: [ReadWriteOnce]
+            resources:
+              requests:
+                storage: 20Gi
+
+      # Scrape ServiceMonitors and PodMonitors from all namespaces
+      serviceMonitorSelectorNilUsesHelmValues: false
+      podMonitorSelectorNilUsesHelmValues: false
+
+  alertmanager:
+    enabled: true
+    alertmanagerSpec:
+      storage:
+        volumeClaimTemplate:
+          spec:
+            storageClassName: gp3
+            accessModes: [ReadWriteOnce]
+            resources:
+              requests:
+                storage: 2Gi
+
+  # These components are not accessible on EKS managed control plane
+  kubeEtcd:
+    enabled: false
+
+  kubeControllerManager:
+    enabled: false
+
+  kubeScheduler:
+    enabled: false

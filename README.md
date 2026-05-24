@@ -72,11 +72,7 @@ docs/
 cd terraform/environments/prod
 terraform init && terraform apply
 
-# 3. Install ALB controller
-ALB_ROLE=$(terraform output -raw alb_controller_role_arn)
-./scripts/install-alb-controller.sh luckydraw-prod us-east-1 $ALB_ROLE
-
-# 4. Deploy application (or push to main to trigger GitHub Actions)
+# 3. Deploy application (or push to main to trigger GitHub Actions)
 # See docs/infrastructure.md for GitHub Actions setup
 ```
 

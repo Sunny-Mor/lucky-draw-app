@@ -10,9 +10,11 @@ on:
   workflow_dispatch:
 
 env:
-  AWS_REGION: us-east-1
+  AWS_REGION:   us-east-1
   CLUSTER_NAME: luckydraw-prod
   K8S_NAMESPACE: luckydraw
+  # Secret name matches what Terraform creates: <cluster_name>/app-secrets
+  SECRETS_NAME: luckydraw-prod/app-secrets
 
 permissions:
   contents: read
@@ -26,29 +28,23 @@ jobs:
     name: Build ${{ matrix.service }}
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         include:
           - service: participate
             dockerfile: docker/participate/Dockerfile
-            ecr_secret: ECR_PARTICIPATE_URL
           - service: submissions
             dockerfile: docker/submissions/Dockerfile
-            ecr_secret: ECR_SUBMISSIONS_URL
           - service: pick-winner
             dockerfile: docker/pick-winner/Dockerfile
-            ecr_secret: ECR_PICK_WINNER_URL
           - service: sync-worker
             dockerfile: docker/sync-worker/Dockerfile
-            ecr_secret: ECR_SYNC_WORKER_URL
-
-    outputs:
-      image_tag: ${{ steps.meta.outputs.tag }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
@@ -58,9 +54,11 @@ jobs:
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Set image tag
-        id: meta
-        run: echo "tag=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+      - name: Resolve ECR repo URL
+        id: ecr-url
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "url=${ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/luckydraw-prod/${{ matrix.service }}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@v5
@@ -69,13 +67,13 @@ jobs:
           file: ${{ matrix.dockerfile }}
           push: true
           tags: |
-            ${{ secrets[matrix.ecr_secret] }}:${{ github.sha }}
-            ${{ secrets[matrix.ecr_secret] }}:latest
+            ${{ steps.ecr-url.outputs.url }}:${{ github.sha }}
+            ${{ steps.ecr-url.outputs.url }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   # -------------------------------------------------------
-  # Deploy to EKS after all images are built
+  # Deploy to EKS
   # -------------------------------------------------------
   deploy:
     name: Deploy to EKS
@@ -86,7 +84,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
@@ -95,40 +93,65 @@ jobs:
       - name: Update kubeconfig
         run: aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
 
-      - name: Create/update Secrets
+      # Pull all secrets from AWS Secrets Manager (created by Terraform)
+      # No manual secret values needed in GitHub — Terraform generates them.
+      - name: Pull secrets from AWS Secrets Manager
+        id: secrets
+        run: |
+          SECRET=$(aws secretsmanager get-secret-value \
+            --secret-id "${{ env.SECRETS_NAME }}" \
+            --query SecretString --output text)
+
+          echo "POSTGRES_PASSWORD=$(echo $SECRET | jq -r .POSTGRES_PASSWORD)" >> "$GITHUB_OUTPUT"
+          echo "ADMIN_USERNAME=$(echo $SECRET | jq -r .ADMIN_USERNAME)"       >> "$GITHUB_OUTPUT"
+          echo "ADMIN_PASSWORD=$(echo $SECRET | jq -r .ADMIN_PASSWORD)"       >> "$GITHUB_OUTPUT"
+          echo "APP_SECRET_KEY=$(echo $SECRET | jq -r .APP_SECRET_KEY)"       >> "$GITHUB_OUTPUT"
+
+      - name: Ensure namespace exists
+        run: kubectl apply -f k8s/base/namespace.yaml
+
+      - name: Create / update Kubernetes secrets
         run: |
           kubectl create secret generic postgres-secret \
-            --from-literal=POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }} \
+            --from-literal=POSTGRES_PASSWORD="${{ steps.secrets.outputs.POSTGRES_PASSWORD }}" \
             --namespace=${{ env.K8S_NAMESPACE }} \
             --dry-run=client -o yaml | kubectl apply -f -
 
           kubectl create secret generic app-secret \
-            --from-literal=ADMIN_USERNAME=${{ secrets.ADMIN_USERNAME }} \
-            --from-literal=ADMIN_PASSWORD=${{ secrets.ADMIN_PASSWORD }} \
-            --from-literal=SECRET_KEY=${{ secrets.APP_SECRET_KEY }} \
+            --from-literal=ADMIN_USERNAME="${{ steps.secrets.outputs.ADMIN_USERNAME }}" \
+            --from-literal=ADMIN_PASSWORD="${{ steps.secrets.outputs.ADMIN_PASSWORD }}" \
+            --from-literal=SECRET_KEY="${{ steps.secrets.outputs.APP_SECRET_KEY }}" \
             --namespace=${{ env.K8S_NAMESPACE }} \
             --dry-run=client -o yaml | kubectl apply -f -
 
+      - name: Resolve ECR base URL
+        id: ecr
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "base=${ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/luckydraw-prod" >> "$GITHUB_OUTPUT"
+
       - name: Set image tags in manifests
         run: |
-          IMAGE_TAG=${{ github.sha }}
-          sed -i "s|PARTICIPATE_IMAGE|${{ secrets.ECR_PARTICIPATE_URL }}:${IMAGE_TAG}|g" k8s/base/participate/participate.yaml
-          sed -i "s|SUBMISSIONS_IMAGE|${{ secrets.ECR_SUBMISSIONS_URL }}:${IMAGE_TAG}|g" k8s/base/submissions/submissions.yaml
-          sed -i "s|PICK_WINNER_IMAGE|${{ secrets.ECR_PICK_WINNER_URL }}:${IMAGE_TAG}|g" k8s/base/pick-winner/pick-winner.yaml
-          sed -i "s|SYNC_WORKER_IMAGE|${{ secrets.ECR_SYNC_WORKER_URL }}:${IMAGE_TAG}|g" k8s/base/sync-worker/sync-worker.yaml
+          TAG=${{ github.sha }}
+          BASE=${{ steps.ecr.outputs.base }}
+          sed -i "s|PARTICIPATE_IMAGE|${BASE}/participate:${TAG}|g"  k8s/base/participate/participate.yaml
+          sed -i "s|SUBMISSIONS_IMAGE|${BASE}/submissions:${TAG}|g"  k8s/base/submissions/submissions.yaml
+          sed -i "s|PICK_WINNER_IMAGE|${BASE}/pick-winner:${TAG}|g"  k8s/base/pick-winner/pick-winner.yaml
+          sed -i "s|SYNC_WORKER_IMAGE|${BASE}/sync-worker:${TAG}|g"  k8s/base/sync-worker/sync-worker.yaml
 
       - name: Deploy with Kustomize
         run: kubectl apply -k k8s/
 
       - name: Wait for rollouts
         run: |
-          kubectl rollout status deployment/participate  -n ${{ env.K8S_NAMESPACE }} --timeout=180s
-          kubectl rollout status deployment/submissions  -n ${{ env.K8S_NAMESPACE }} --timeout=180s
-          kubectl rollout status deployment/pick-winner  -n ${{ env.K8S_NAMESPACE }} --timeout=180s
-          kubectl rollout status deployment/sync-worker  -n ${{ env.K8S_NAMESPACE }} --timeout=180s
+          kubectl rollout status deployment/participate -n ${{ env.K8S_NAMESPACE }} --timeout=180s
+          kubectl rollout status deployment/submissions -n ${{ env.K8S_NAMESPACE }} --timeout=180s
+          kubectl rollout status deployment/pick-winner -n ${{ env.K8S_NAMESPACE }} --timeout=180s
+          kubectl rollout status deployment/sync-worker -n ${{ env.K8S_NAMESPACE }} --timeout=180s
 
       - name: Print ALB address
         run: |
           echo "==> ALB Ingress address:"
           kubectl get ingress luckydraw-ingress -n ${{ env.K8S_NAMESPACE }} \
             -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+          echo ""

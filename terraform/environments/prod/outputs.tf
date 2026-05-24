@@ -45,3 +45,17 @@ output "ecr_sync_worker_url" {
 output "alb_controller_role_arn" {
   value = module.iam.alb_controller_role_arn
 }
+
+# The ARN of the Secrets Manager secret that holds all app credentials.
+# GitHub Actions reads this secret directly — no manual secret management needed.
+output "app_secrets_arn" {
+  description = "AWS Secrets Manager ARN — used by deploy workflow to inject k8s secrets"
+  value       = aws_secretsmanager_secret.app.arn
+}
+
+# Convenience: show the generated admin password once after apply
+output "admin_password" {
+  description = "Generated admin password (also stored in Secrets Manager)"
+  value       = random_password.admin_password.result
+  sensitive   = true
+}

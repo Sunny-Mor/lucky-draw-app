@@ -1,55 +1,58 @@
 # Monitoring Setup
 
-## Deploy kube-prometheus-stack
+## Structure
+
+```
+monitoring/
+└── kube-prometheus-stack/
+    ├── Chart.yaml           # declares kube-prometheus-stack v58.0.0 as dependency
+    └── values-override.yaml # all customisations (storage, retention, EKS tweaks)
+```
+
+## Deploy
 
 ```bash
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo update
+# 1. Pull the chart dependency into the repo
+cd monitoring/kube-prometheus-stack
+helm dependency update
 
-helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+# 2. Get Grafana password from Secrets Manager (set by Terraform)
+GRAFANA_PASSWORD=$(aws secretsmanager get-secret-value \
+  --secret-id luckydraw-prod/app-secrets \
+  --query SecretString --output text | jq -r .ADMIN_PASSWORD)
+
+# 3. Install
+helm upgrade --install luckydraw-monitoring . \
   --namespace monitoring \
   --create-namespace \
-  --values monitoring/kube-prometheus-stack-values.yaml \
-  --set grafana.adminPassword=$GRAFANA_PASSWORD \
-  --version 58.0.0 \
+  --values values-override.yaml \
+  --set kube-prometheus-stack.grafana.adminPassword="$GRAFANA_PASSWORD" \
   --wait
 ```
 
 ## Access Grafana
 
 ```bash
-kubectl port-forward svc/kube-prometheus-stack-grafana 3000:80 -n monitoring
+kubectl port-forward svc/luckydraw-monitoring-grafana 3000:80 -n monitoring
 ```
 
-Open http://localhost:3000 — default user: `admin`
+Open http://localhost:3000 — user: `admin`, password: from Secrets Manager above.
 
-## Useful Dashboards (pre-installed)
+## Access Prometheus
 
-| Dashboard | ID |
-|---|---|
-| Kubernetes Cluster Overview | 7249 |
-| Node Exporter Full | 1860 |
-| Kubernetes Pods | 6781 |
+```bash
+kubectl port-forward svc/luckydraw-monitoring-kube-prometheus-stack-prometheus 9090:9090 -n monitoring
+```
 
-## Check Stack Status
+## Access Alertmanager
+
+```bash
+kubectl port-forward svc/luckydraw-monitoring-kube-prometheus-stack-alertmanager 9093:9093 -n monitoring
+```
+
+## Check Status
 
 ```bash
 kubectl get pods -n monitoring
 kubectl get pvc  -n monitoring
 ```
-
-## Prometheus Targets
-
-```bash
-kubectl port-forward svc/kube-prometheus-stack-prometheus 9090:9090 -n monitoring
-```
-
-Open http://localhost:9090/targets to verify all scrape targets are UP.
-
-## Alertmanager
-
-```bash
-kubectl port-forward svc/kube-prometheus-stack-alertmanager 9093:9093 -n monitoring
-```
-
-Open http://localhost:9093 to view active alerts.

@@ -1,0 +1,10 @@
+apiVersion: v2
+name: luckydraw-monitoring
+description: Monitoring stack for luckydraw-prod (kube-prometheus-stack wrapper)
+type: application
+version: 1.0.0
+
+dependencies:
+  - name: kube-prometheus-stack
+    version: "58.0.0"
+    repository: https://prometheus-community.github.io/helm-charts

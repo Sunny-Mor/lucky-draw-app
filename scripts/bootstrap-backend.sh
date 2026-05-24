@@ -1,20 +1,25 @@
 #!/usr/bin/env bash
-# Run this ONCE before the first `terraform init`
-# Creates the S3 bucket and DynamoDB table used as Terraform remote backend.
+# Run this ONCE before the first `terraform init`.
+# Creates the S3 bucket for Terraform remote state.
+# Native S3 locking is used (Terraform >= 1.10) — no DynamoDB needed.
 set -euo pipefail
 
 REGION="${1:-us-east-1}"
 BUCKET="luckydraw-tfstate"
-TABLE="luckydraw-tfstate-lock"
 
-echo "==> Creating S3 backend bucket: $BUCKET"
+echo "==> Creating S3 backend bucket: $BUCKET in $REGION"
+
 if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
   echo "    Bucket already exists, skipping."
 else
-  aws s3api create-bucket \
-    --bucket "$BUCKET" \
-    --region "$REGION" \
-    $( [[ "$REGION" != "us-east-1" ]] && echo "--create-bucket-configuration LocationConstraint=$REGION" )
+  if [[ "$REGION" == "us-east-1" ]]; then
+    aws s3api create-bucket --bucket "$BUCKET" --region "$REGION"
+  else
+    aws s3api create-bucket \
+      --bucket "$BUCKET" \
+      --region "$REGION" \
+      --create-bucket-configuration LocationConstraint="$REGION"
+  fi
 
   aws s3api put-bucket-versioning \
     --bucket "$BUCKET" \
@@ -30,20 +35,9 @@ else
     --public-access-block-configuration \
       "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
 
-  echo "    Bucket created."
+  echo "    Bucket created and secured."
 fi
 
-echo "==> Creating DynamoDB lock table: $TABLE"
-if aws dynamodb describe-table --table-name "$TABLE" --region "$REGION" 2>/dev/null; then
-  echo "    Table already exists, skipping."
-else
-  aws dynamodb create-table \
-    --table-name "$TABLE" \
-    --attribute-definitions AttributeName=LockID,AttributeType=S \
-    --key-schema AttributeName=LockID,KeyType=HASH \
-    --billing-mode PAY_PER_REQUEST \
-    --region "$REGION"
-  echo "    Table created."
-fi
-
-echo "==> Backend bootstrap complete. Run: cd terraform/environments/prod && terraform init"
+echo ""
+echo "==> Bootstrap complete."
+echo "    Next: cd terraform/environments/prod && terraform init"

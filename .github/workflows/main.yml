@@ -19,12 +19,17 @@ jobs:
     - name: Check out the repository
       uses: actions/checkout@v3
 
+    - name: Convert repository owner to lowercase
+      id: repo_owner
+      run: |
+        echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
     - name: Log in to GitHub Container Registry
       uses: docker/login-action@v2
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
-        password: ${{ github.TOKEN }}
+        password: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v2
@@ -32,7 +37,7 @@ jobs:
     - name: Build Docker image for participate service
       env:
         BUILD_ID: ${{ github.run_id }}
-        REPO_NAME: ghcr.io/${{ github.repository_owner }}/sunnymor-participate-app
+        REPO_NAME: ghcr.io/${{ steps.repo_owner.outputs.owner }}/sunnymor-participate-app
       run: |
         echo "Building participate Docker image with tags: $BUILD_ID and latest"
         docker build -f participate.dockerfile -t $REPO_NAME:$BUILD_ID -t $REPO_NAME:latest .
@@ -40,7 +45,7 @@ jobs:
     - name: Push Docker image for participate service
       env:
         BUILD_ID: ${{ github.run_id }}
-        REPO_NAME: ghcr.io/${{ github.repository_owner }}/sunnymor-participate-app
+        REPO_NAME: ghcr.io/${{ steps.repo_owner.outputs.owner }}/sunnymor-participate-app
       run: |
         echo "Pushing participate Docker images to GHCR.io"
         docker push $REPO_NAME:$BUILD_ID
@@ -53,6 +58,11 @@ jobs:
     steps:
     - name: Check out the repository
       uses: actions/checkout@v3
+
+    - name: Convert repository owner to lowercase
+      id: repo_owner
+      run: |
+        echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
 
     - name: Log in to GitHub Container Registry
       uses: docker/login-action@v2
@@ -67,7 +77,7 @@ jobs:
     - name: Build Docker image for submissions service
       env:
         BUILD_ID: ${{ github.run_id }}
-        REPO_NAME: ghcr.io/${{ github.repository_owner }}/sunnymor-submissions-app
+        REPO_NAME: ghcr.io/${{ steps.repo_owner.outputs.owner }}/sunnymor-submissions-app
       run: |
         echo "Building submissions Docker image with tags: $BUILD_ID and latest"
         docker build -f submissions.dockerfile -t $REPO_NAME:$BUILD_ID -t $REPO_NAME:latest .
@@ -75,7 +85,7 @@ jobs:
     - name: Push Docker image for submissions service
       env:
         BUILD_ID: ${{ github.run_id }}
-        REPO_NAME: ghcr.io/${{ github.repository_owner }}/sunnymor-submissions-app
+        REPO_NAME: ghcr.io/${{ steps.repo_owner.outputs.owner }}/sunnymor-submissions-app
       run: |
         echo "Pushing submissions Docker images to GHCR.io"
         docker push $REPO_NAME:$BUILD_ID
@@ -89,6 +99,11 @@ jobs:
     - name: Check out the repository
       uses: actions/checkout@v3
 
+    - name: Convert repository owner to lowercase
+      id: repo_owner
+      run: |
+        echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
     - name: Log in to GitHub Container Registry
       uses: docker/login-action@v2
       with:
@@ -102,7 +117,7 @@ jobs:
     - name: Build Docker image for pick_winner service
       env:
         BUILD_ID: ${{ github.run_id }}
-        REPO_NAME: ghcr.io/${{ github.repository_owner }}/sunnymor-sync-worker-app
+        REPO_NAME: ghcr.io/${{ steps.repo_owner.outputs.owner }}/sunnymor-sync-worker-app
       run: |
         echo "Building sync-postgres Docker image with tags: $BUILD_ID and latest"
         docker build -f sync_postgres.dockerfile -t $REPO_NAME:$BUILD_ID -t $REPO_NAME:latest .
@@ -110,7 +125,7 @@ jobs:
     - name: Push Docker image for sync-postgres service
       env:
         BUILD_ID: ${{ github.run_id }}
-        REPO_NAME: ghcr.io/${{ github.repository_owner }}/sunnymor-sync-worker-app
+        REPO_NAME: ghcr.io/${{ steps.repo_owner.outputs.owner }}/sunnymor-sync-worker-app
       run: |
         echo "Pushing sync-postgres Docker images to GHCR.io"
         docker push $REPO_NAME:$BUILD_ID
@@ -124,6 +139,11 @@ jobs:
     - name: Check out the repository
       uses: actions/checkout@v3
 
+    - name: Convert repository owner to lowercase
+      id: repo_owner
+      run: |
+        echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
     - name: Log in to GitHub Container Registry
       uses: docker/login-action@v2
       with:
@@ -137,7 +157,7 @@ jobs:
     - name: Build Docker image for pick_winner service
       env:
         BUILD_ID: ${{ github.run_id }}
-        REPO_NAME: ghcr.io/${{ github.repository_owner }}/sunnymor-pick-winner-app
+        REPO_NAME: ghcr.io/${{ steps.repo_owner.outputs.owner }}/sunnymor-pick-winner-app
       run: |
         echo "Building pick_winner Docker image with tags: $BUILD_ID and latest"
         docker build -f pick_winner.dockerfile -t $REPO_NAME:$BUILD_ID -t $REPO_NAME:latest .
@@ -145,7 +165,7 @@ jobs:
     - name: Push Docker image for pick_winner service
       env:
         BUILD_ID: ${{ github.run_id }}
-        REPO_NAME: ghcr.io/${{ github.repository_owner }}/sunnymor-pick-winner-app
+        REPO_NAME: ghcr.io/${{ steps.repo_owner.outputs.owner }}/sunnymor-pick-winner-app
       run: |
         echo "Pushing pick_winner Docker images to GHCR.io"
         docker push $REPO_NAME:$BUILD_ID
